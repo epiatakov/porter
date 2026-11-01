@@ -1,0 +1,7 @@
+# Local task list for porter (source = "local").
+
+[[task]]
+id = "demo-1"
+title = "Add a hello note"
+body = "Create PORTER_DEMO.md with a short greeting."
+labels = ["p1"]

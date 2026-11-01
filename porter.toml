@@ -1,0 +1,44 @@
+# porter configuration for porter itself (dogfood). See docs/dogfood.md.
+# Picks open issues labeled `agent-ready` in this repo and opens PRs.
+
+[repo]
+path = "."
+github = "epiatakov/porter"
+default_branch = "main"
+remote = "origin"
+branch_prefix = "porter/"
+
+[tasks]
+source = "github"
+label = "agent-ready"
+limit = 20
+
+[executor]
+kind = "copilot-cli"
+
+[executor.copilot]
+binary = "copilot"
+model = ""                 # empty = the CLI's default model
+allow_all_tools = true     # the agent edits files and runs tests unattended
+deny_tools = []            # e.g. ["shell(git push)"]; pattern syntax: see docs/executors.md
+output_format = "text"
+
+[verify]
+commands = ["ruff check .", "ruff format --check .", "pytest -q"]
+timeout = 900
+
+[policy]
+open_pr = true
+push_default_branch = false
+merge = false
+escalation_label = "needs-human"
+verify_feedback_rounds = 1
+
+[budgets]
+wall_seconds = 1800
+attempts = 3
+premium_requests = 5       # copilot does not report usage to porter; counted as 1 per run
+
+[memory]
+backend = "file"           # "cairn" to recall from a cairn vault; falls back to files
+limit = 5

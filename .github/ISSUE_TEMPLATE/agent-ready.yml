@@ -1,0 +1,43 @@
+name: Agent-ready task
+description: A small, well-defined task that porter may pick up and turn into a PR.
+title: "[agent] "
+labels: ["agent-ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        porter picks open issues labeled `agent-ready`. Keep the task small enough
+        for one PR. Add `p1`/`p2`/`p3` to set priority (lower number = sooner).
+        If porter gets stuck it adds `needs-human` and comments; remove that label
+        to let it try again.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this is done? One or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkable items. Name the tests that should exist or pass.
+      placeholder: |
+        - [ ] ...
+        - [ ] `pytest -q` and `ruff check .` pass
+    validations:
+      required: true
+  - type: textarea
+    id: pointers
+    attributes:
+      label: Pointers
+      description: Files, functions, or docs to start from. Anything out of scope.
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options:
+        - "XS (< 50 lines)"
+        - "S (< 200 lines)"
+    validations:
+      required: true
