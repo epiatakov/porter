@@ -1,0 +1,41 @@
+# porter configuration. See docs/design.md and docs/deployment.md.
+
+[repo]
+path = "."                # repository porter works in, relative to this file
+github = ""               # "owner/name"; empty = let `gh` infer from the git remote
+default_branch = "main"
+remote = "origin"
+branch_prefix = "porter/"
+
+[tasks]
+source = "local"
+file = "tasks.toml"
+
+[executor]
+kind = "fake"   # scripted stand-in; switch to "copilot-cli" for real work
+
+[executor.fake]
+script = [
+  { outcome = "completed", summary = "Added the requested note.", write = { "PORTER_DEMO.md" = "hello from porter\n" } },
+]
+
+[verify]
+# {python} expands to the interpreter running porter.
+commands = ["{python} -c \"print('checks ok')\""]
+timeout = 900
+
+[policy]
+open_pr = true
+push_default_branch = false   # must stay false
+merge = false                 # must stay false
+escalation_label = "needs-human"
+verify_feedback_rounds = 1
+
+[budgets]
+wall_seconds = 1800
+attempts = 3
+premium_requests = 0          # 0 = no cap
+
+[memory]
+backend = "file"              # "file" | "cairn" | "none"
+limit = 5
