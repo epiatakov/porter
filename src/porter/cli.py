@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
+from .gitops import worktree_dirname
 from .journal import Journal
 from .runner import Porter, PorterError, build_source
 from .state import StateStore
@@ -161,6 +162,9 @@ def cmd_status(cfg: Config, args) -> int:
         print(f"{r.task.id:>8}  {r.status:<11} {r.attempts:>5} {r.wall_seconds:>5.0f}s  {extra}")
         if r.last_handoff:
             print(f"{'':>8}  handoff: {r.last_handoff}")
+        tree = cfg.worktrees_dir / worktree_dirname(r.branch, cfg.repo.branch_prefix)
+        if r.branch and not args.dry_run and tree.is_dir():
+            print(f"{'':>8}  worktree: {tree}")
     return 0
 
 

@@ -94,6 +94,11 @@ class Config:
         base = self.workdir / self.state_dir_name
         return base / "dry-run" if dry_run else base
 
+    @property
+    def worktrees_dir(self) -> Path:
+        """Per-task Git worktrees. A dry run never creates any."""
+        return self.state_dir() / "worktrees"
+
 
 _SECTIONS = {
     "repo",
