@@ -25,6 +25,11 @@ The core owns:
   goes first.
 - **Work state and handoff.** `.porter/state.db` holds tasks and runs. Every run
   ends with `.porter/runs/<id>/handoff.md`.
+- **Per-task worktrees.** Each task branch lives in its own linked worktree,
+  `.porter/worktrees/<id>-<slug>/`, created from the default branch. The executor,
+  verification, change detection, commit, and push run there; state, journal,
+  handoffs, and memory stay in `.porter/`. The developer's checkout is never
+  switched, staged, or committed.
 - **Autonomy policy and budgets.** From `[policy]` and `[budgets]`.
 - **Verification.** Configured commands run after the executor says it is done.
 - **Journal.** `.porter/journal.jsonl`, append-only, one JSON object per decision,
@@ -95,8 +100,17 @@ every executor, including ones without structured output.
 `porter run` takes a lock file with its pid. On start, a lock from a dead pid is
 stale: the previous process was killed. Any task still in `running` or `verifying`
 gets its open run marked `interrupted`, a handoff saying so, and goes back to
-`queued`. It is picked before new work, on the same branch, with the handoff in its
-prompt. The killed attempt still counts toward the budget.
+`queued`. It is picked before new work, on the same branch and in the same
+worktree (with whatever the killed run left there), with the handoff in its prompt.
+The killed attempt still counts toward the budget.
+
+Before reusing a worktree, porter checks with `git worktree list` that it is
+registered for the task branch, belongs to the same repository, and is on that
+branch. If the branch is checked out in the developer's checkout or in a worktree
+porter did not create, or an unknown directory sits at the worktree path, the task
+goes to `needs_human` with a specific recovery step and nothing is moved or
+deleted. Unfinished worktrees are kept; a worktree is removed (without `--force`)
+only after its PR is merged.
 
 ## Why SQLite
 
@@ -125,8 +139,10 @@ backend. Memory is never a code dependency.
 - `policy.push_default_branch = true` and `policy.merge = true` are rejected at
   config load.
 - `.porter/` is never committed.
+- Commits are made only in porter's own worktree, never in the developer's
+  checkout (`GitOps.commit_push_pr` refuses).
 - A dry run replaces any non-fake executor with the fake and prints the command it
-  would have run.
+  would have run. It creates no worktree or branch and stages nothing.
 
 ## Lessons
 

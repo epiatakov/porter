@@ -90,5 +90,6 @@ private installation; do not upstream org-specific code.
 
 - Start with `porter run --once --dry-run`, then `porter run --once` by hand, then
   schedule it (cron or a CI schedule) once the escalation flow works.
-- Keep `.porter/` on durable storage; it holds state, handoffs, and the journal.
+- Keep `.porter/` on durable storage; it holds state, handoffs, the journal, and
+  the per-task worktrees (`.porter/worktrees/`).
 - Review `porter log` and the cost entries regularly.

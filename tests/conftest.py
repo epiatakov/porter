@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import textwrap
 from pathlib import Path
@@ -128,3 +129,29 @@ def states(porter, task_id: str) -> list[str]:
                 out.append(e["from"])
             out.append(e["to"])
     return out
+
+
+FAKE_GH = """#!/bin/sh
+# Fake `gh` on PATH for tests that go through the real CLI entry point.
+echo "$*" >> "$FAKE_GH_LOG"
+case "$1 $2" in
+  "pr create") cat > /dev/null; echo "https://github.com/acme/widgets/pull/7" ;;
+  "pr view") echo '{"state": "OPEN", "url": "https://github.com/acme/widgets/pull/7"}' ;;
+esac
+exit 0
+"""
+
+
+@pytest.fixture
+def fake_gh_bin(tmp_path: Path, monkeypatch) -> Path:
+    """Put a canned ``gh`` first on PATH. Returns the file that logs its calls."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(FAKE_GH)
+    gh.chmod(0o755)
+    log = tmp_path / "gh-calls.log"
+    log.touch()
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_GH_LOG", str(log))
+    return log
