@@ -9,8 +9,8 @@ Script steps (one per attempt; the last step repeats)::
 
 Keys: ``outcome`` (completed|blocked|failed), ``summary``, ``blocker``, ``write``
 (files relative to the workdir), ``events`` (list of strings), ``cost``
-(e.g. ``{premium_requests = 1}``), ``kill`` (SIGKILL this process mid-run to test
-recovery; only when ``PORTER_FAKE_ALLOW_KILL=1``), ``sleep`` (seconds per event, to
+(e.g. ``{premium_requests = 1}``), ``kill`` (SIGKILL this process after the writes, to
+test recovery; only when ``PORTER_FAKE_ALLOW_KILL=1``), ``sleep`` (seconds per event, to
 test wall-time budgets).
 """
 
@@ -56,10 +56,6 @@ class FakeExecutor(Executor):
         step = run.state["step"]
         ctx = run.context
         yield ExecEvent("message", f"fake: starting attempt {ctx.attempt} for task {run.task.id}")
-        if step.get("kill") and os.environ.get("PORTER_FAKE_ALLOW_KILL") == "1":
-            # Simulates the machine or process dying: no cleanup, no handoff.
-            # Guarded by an env var so a test runner never kills itself by accident.
-            os.kill(os.getpid(), signal.SIGKILL)
         for text in step.get("events", []):
             if run.state["stopped"]:
                 return
@@ -72,6 +68,10 @@ class FakeExecutor(Executor):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(str(content), encoding="utf-8")
             yield ExecEvent("tool", f"wrote {rel}", {"tool": "write", "path": rel})
+        if step.get("kill") and os.environ.get("PORTER_FAKE_ALLOW_KILL") == "1":
+            # Simulates the machine or process dying after unfinished edits: no cleanup,
+            # no handoff. Guarded by an env var so a test runner never kills itself.
+            os.kill(os.getpid(), signal.SIGKILL)
         if step.get("cost"):
             yield ExecEvent("usage", "usage", dict(step["cost"]))
 

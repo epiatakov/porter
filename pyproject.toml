@@ -31,6 +31,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Import porter from this checkout, so porter's own verification in a task worktree
+# tests the worktree's code rather than the editable install.
+pythonpath = ["src"]
 addopts = "-q"
 
 [tool.ruff]

@@ -50,7 +50,11 @@ def test_real_run_opens_pr_on_branch(repo, make_config):
     assert outcome.status == Status.PR_OPEN, outcome.reason
     assert outcome.pr.url == "https://github.com/acme/widgets/pull/7"
     branch = "porter/7-add-greeting-file"
-    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == branch
+    # The developer checkout stays on its branch; the work happened in porter's worktree.
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    tree = cfg.worktrees_dir / "7-add-greeting-file"
+    assert git(tree, "rev-parse", "--abbrev-ref", "HEAD") == branch
+    assert not (repo / "GREETING.md").exists()
     # The branch reached the remote; main did not move.
     assert git(repo, "ls-remote", "origin", branch)
     assert git(repo, "rev-parse", "main") == main_before
@@ -68,6 +72,9 @@ def test_real_run_opens_pr_on_branch(repo, make_config):
     shell.pr_state = "MERGED"
     porter.run_once()  # also picks task 3
     assert porter.store.get("7").status == Status.DONE
+    # A merged task's clean worktree is removed; the branch stays.
+    assert not tree.exists()
+    assert git(repo, "rev-parse", "--verify", branch)
 
 
 def test_verify_failure_feeds_back_once_then_passes(repo, make_config):
@@ -221,7 +228,9 @@ def test_resume_after_killed_run(repo, make_config):
     prompt = (porter.state_dir / "runs" / str(runs[1].id) / "prompt.md").read_text()
     assert "Previous handoff" in prompt and "interrupted" in prompt
     assert states(porter, "7") == ["queued", "running", "queued", "running", "verifying", "pr_open"]
-    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "porter/7-add-greeting-file"
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    tree = cfg.worktrees_dir / "7-add-greeting-file"
+    assert git(tree, "rev-parse", "--abbrev-ref", "HEAD") == "porter/7-add-greeting-file"
 
 
 def test_no_changes_escalates(repo, make_config):

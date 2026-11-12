@@ -69,7 +69,8 @@ copilot -p "<prompt>" [--model M] [--reasoning-effort E] --allow-all-tools
 ```
 
 - A `[[stage]]` model or effort replaces the configured `model` / `effort` for that run.
-- cwd is the repository; stdin is closed; `NO_COLOR=1` is set.
+- cwd is the task's worktree (see "Where porter works" in the README); stdin is
+  closed; `NO_COLOR=1` is set.
 - stdout and stderr go to `.porter/runs/<id>/copilot-output.log` and to the journal.
 - The run is stopped (SIGTERM, then SIGKILL after a grace period) at the task's
   wall-time deadline.
@@ -127,9 +128,10 @@ Record results (date, CLI version, findings) in this file.
 ## Fake executor (`fake`)
 
 Scripted steps, one per attempt (the last step repeats). Keys: `outcome`,
-`summary`, `blocker`, `write` (files), `events`, `cost`, `sleep`, `kill` (only
-with `PORTER_FAKE_ALLOW_KILL=1`; used by the killed-run test). In a dry run its file
-writes go to the run directory, not the checkout.
+`summary`, `blocker`, `write` (files), `events`, `cost`, `sleep`, `kill` (SIGKILL
+after the writes, leaving unfinished edits; only with `PORTER_FAKE_ALLOW_KILL=1`;
+used by the killed-run tests). On a real run it writes into the task worktree; in a
+dry run its file writes go to the run directory, not the checkout.
 
 ## Writing an executor
 
