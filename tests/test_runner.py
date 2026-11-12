@@ -238,6 +238,20 @@ def test_idle_when_queue_empty(tmp_path, make_config):
     assert Porter(cfg, dry_run=True, out=quiet).run_once() is None
 
 
+def test_source_failure_starts_no_new_task(tmp_path, make_config):
+    cfg = make_config(tmp_path, script=WRITE)
+    porter = Porter(cfg, dry_run=True, out=quiet)
+    porter.sync_tasks()  # both tasks are stored as queued
+
+    def broken():
+        raise OSError("network down")
+
+    porter.source.list = broken
+    assert porter.run_once() is None
+    assert porter.store.get("3").status == Status.QUEUED
+    assert porter.store.get("7").status == Status.QUEUED
+
+
 def test_github_label_removal_requeues(tmp_path, make_config):
     import json as _json
 
