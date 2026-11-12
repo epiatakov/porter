@@ -73,6 +73,17 @@ class MemoryConfig:
 
 
 @dataclass
+class StageConfig:
+    """One ``[[stage]]``: a fresh executor session with its own model and instructions."""
+
+    name: str
+    instructions: str = ""
+    model: str = ""  # empty: the executor's configured model
+    effort: str = ""  # reasoning effort; only for executors that declare model_per_run
+    verify: bool = False  # run the verify commands after this stage (always after the last)
+
+
+@dataclass
 class Config:
     root: Path
     repo: RepoConfig = field(default_factory=RepoConfig)
@@ -82,6 +93,7 @@ class Config:
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     budgets: BudgetConfig = field(default_factory=BudgetConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    stages: list[StageConfig] = field(default_factory=list)
     state_dir_name: str = ".porter"
     plugin_paths: list[Path] = field(default_factory=list)
     source_path: Path | None = None
@@ -108,6 +120,7 @@ _SECTIONS = {
     "policy",
     "budgets",
     "memory",
+    "stage",
     "state",
     "plugins",
 }
@@ -188,6 +201,18 @@ def parse_config(raw: dict[str, Any], root: Path) -> Config:
 
     memory = _take("memory", dict(raw.get("memory", {})), set(MemoryConfig.__dataclass_fields__))
     cfg.memory = MemoryConfig(**memory)
+
+    stages = raw.get("stage", [])
+    if not isinstance(stages, list):
+        raise ConfigError("stages are [[stage]] tables, not a single [stage] table")
+    for i, data in enumerate(stages, 1):
+        stage = _take(f"stage {i}", dict(data), set(StageConfig.__dataclass_fields__))
+        if not str(stage.get("name", "")).strip():
+            raise ConfigError(f"[[stage]] number {i} needs a name")
+        cfg.stages.append(StageConfig(**stage))
+    names = [s.name for s in cfg.stages]
+    if len(set(names)) != len(names):
+        raise ConfigError("[[stage]] names must be unique")
 
     state = _take("state", dict(raw.get("state", {})), {"dir"})
     cfg.state_dir_name = state.get("dir", ".porter")

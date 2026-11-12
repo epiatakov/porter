@@ -4,7 +4,8 @@ Only behaviour verified from public sources is relied on; see docs/executors.md.
 Verified: ``-p/--prompt`` runs one prompt non-interactively; ``--allow-all-tools``,
 ``--allow-tool``/``--deny-tool``, ``--model``, ``--output-format json`` (JSONL) and
 ``--log-dir`` exist; auth comes from the environment (``COPILOT_GITHUB_TOKEN``,
-``GH_TOKEN``, ``GITHUB_TOKEN``) or a prior ``copilot`` login. Not verified: exit
+``GH_TOKEN``, ``GITHUB_TOKEN``) or a prior ``copilot`` login. ``--reasoning-effort``
+is listed by ``copilot --help`` (1.0.108). Not verified: exit
 codes, the JSONL event schema, resume combined with ``-p``, the format of the usage
 summary. Capabilities below reflect that.
 """
@@ -41,6 +42,7 @@ class CopilotCliExecutor(Executor):
         tools=True,  # agentic: edits files and runs commands under --allow-* flags
         structured_output=False,  # no schema-constrained final answer found
         cost_reporting=False,  # an exit summary exists; its format is not verified
+        model_per_run=True,  # --model and --reasoning-effort are set per invocation
         notes="see docs/executors.md for what was verified",
     )
 
@@ -48,6 +50,7 @@ class CopilotCliExecutor(Executor):
         self,
         binary: str | list[str] = "copilot",
         model: str = "",
+        effort: str = "",
         allow_all_tools: bool = True,
         allow_tools: list[str] | None = None,
         deny_tools: list[str] | None = None,
@@ -61,6 +64,7 @@ class CopilotCliExecutor(Executor):
             raise ValueError("executor.copilot.output_format must be 'text' or 'json'")
         self.binary = [binary] if isinstance(binary, str) else list(binary)
         self.model = model
+        self.effort = effort
         self.allow_all_tools = allow_all_tools
         self.allow_tools = list(allow_tools or [])
         self.deny_tools = list(deny_tools or [])
@@ -73,8 +77,12 @@ class CopilotCliExecutor(Executor):
 
     def command(self, context: RunContext) -> list[str]:
         cmd = [*self.binary, "-p", context.prompt]
-        if self.model:
-            cmd += ["--model", self.model]
+        model = context.model or self.model
+        if model:
+            cmd += ["--model", model]
+        effort = context.effort or self.effort
+        if effort:
+            cmd += ["--reasoning-effort", effort]
         if self.allow_all_tools:
             cmd.append("--allow-all-tools")
         for tool in self.allow_tools:

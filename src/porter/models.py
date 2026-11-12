@@ -21,7 +21,10 @@ class Status(StrEnum):
 TRANSITIONS: dict[Status, frozenset[Status]] = {
     Status.QUEUED: frozenset({Status.RUNNING, Status.NEEDS_HUMAN, Status.FAILED}),
     # RUNNING -> QUEUED happens only when recovering an interrupted run.
-    Status.RUNNING: frozenset({Status.VERIFYING, Status.QUEUED, Status.NEEDS_HUMAN, Status.FAILED}),
+    # RUNNING -> RUNNING starts the next configured stage in a fresh session.
+    Status.RUNNING: frozenset(
+        {Status.RUNNING, Status.VERIFYING, Status.QUEUED, Status.NEEDS_HUMAN, Status.FAILED}
+    ),
     # VERIFYING -> RUNNING is the single verification-feedback retry.
     Status.VERIFYING: frozenset(
         {Status.RUNNING, Status.PR_OPEN, Status.QUEUED, Status.NEEDS_HUMAN, Status.FAILED}

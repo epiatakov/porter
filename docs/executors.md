@@ -31,6 +31,7 @@ the repositories above. Items marked *unverified* were not confirmed in any sour
 | Non-interactive mode | `-p` / `--prompt "<text>"` runs one prompt and exits; piped stdin also works | Verified (changelog) |
 | Tool permissions | `--allow-all-tools`, `--allow-all-paths`, `--allow-all-urls`; `--allow-tool` / `--deny-tool` with patterns; `--allow-all` / `--yolo` | Flags verified; **pattern syntax unverified** |
 | Model | `--model <name>`; `auto` is accepted | Verified (changelog) |
+| Reasoning effort | `--reasoning-effort <none\|minimal\|low\|medium\|high\|xhigh\|max>`; supported levels depend on the model | Verified (`copilot --help`, CLI 1.0.108, 2026-11-12) |
 | Output format | `--output-format json` emits JSONL in prompt mode | Flag verified; **event schema unverified** |
 | Stats output | An exit summary with usage is printed; `--silent` suppresses stats | Partly verified (changelog summaries) |
 | Resume | `--resume[=<id or name>]`, `--continue`, `--session-id=<id>` exist | Verified; **use together with `-p` unverified** |
@@ -54,6 +55,7 @@ It does not bundle or redistribute it.
 | `tools` | `true` | The agent edits files and runs commands under the `--allow-*` flags. |
 | `structured_output` | `false` | No top-level schema-constrained output found. porter parses the `PORTER-STATUS:` line. |
 | `cost_reporting` | `false` | The usage summary format is unverified. With a premium-request cap set, porter counts one request per run and marks it `estimated` in the journal. |
+| `model_per_run` | `true` | `--model` and `--reasoning-effort` are set on every invocation, so each `[[stage]]` can use its own. |
 
 These get revisited once the official reference can be checked. Flip a capability
 only with a source and a test.
@@ -61,10 +63,12 @@ only with a source and a test.
 ### What porter runs
 
 ```
-copilot -p "<prompt>" [--model M] --allow-all-tools [--allow-tool P]... [--deny-tool P]...
-        [--output-format json] --log-dir .porter/runs/<id>/copilot-logs [extra_args...]
+copilot -p "<prompt>" [--model M] [--reasoning-effort E] --allow-all-tools
+        [--allow-tool P]... [--deny-tool P]... [--output-format json]
+        --log-dir .porter/runs/<id>/copilot-logs [extra_args...]
 ```
 
+- A `[[stage]]` model or effort replaces the configured `model` / `effort` for that run.
 - cwd is the task's worktree (see "Where porter works" in the README); stdin is
   closed; `NO_COLOR=1` is set.
 - stdout and stderr go to `.porter/runs/<id>/copilot-output.log` and to the journal.
@@ -82,6 +86,7 @@ kind = "copilot-cli"
 [executor.copilot]
 binary = "copilot"        # or a list, e.g. ["npx", "@github/copilot"]
 model = ""                # empty = CLI default
+effort = ""               # empty = CLI default; a [[stage]] can override both
 allow_all_tools = true
 allow_tools = []
 deny_tools = []           # pattern syntax: check `copilot --help` first

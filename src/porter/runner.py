@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import Config
+from .config import Config, StageConfig
 from .executors.base import ExecResult, Executor, RunContext
 from .executors.fake import FakeExecutor
 from .executors.registry import build_executor
@@ -291,9 +291,22 @@ class Porter:
             if reason:
                 return self._escalate(task, reason, "raise the budget or split the task", outcome)
             prev = Handoff.load(Path(row.last_handoff)) if row.last_handoff else None
+            stage = self._stage(row)
+            model, effort = self._stage_model(stage)
             run = self.store.start_run(task.id, self.executor.name)
             outcome.run_ids.append(run.id)
             self._transition(task, Status.RUNNING, run=run.id)
+            if stage is not None:
+                self.store.update(task.id, stage=stage.name)
+                self.journal.append(
+                    "decision",
+                    task=task.id,
+                    run=run.id,
+                    action="stage",
+                    stage=stage.name,
+                    model=model,
+                    effort=effort,
+                )
             remaining = self.cfg.budgets.wall_seconds - row.wall_seconds
             ctx = RunContext(
                 run_id=run.id,
@@ -306,10 +319,14 @@ class Porter:
                     memory=memory,
                     feedback=feedback,
                     verify_commands=[expand(c) for c in self.cfg.verify.commands],
+                    stage=stage,
+                    stages=self.cfg.stages,
                 ),
                 deadline=self.clock() + max(remaining, 0),
                 resume_session=row.last_session if self.executor.capabilities.resume else "",
                 dry_run=self.dry_run,
+                model=model,
+                effort=effort,
             )
             ctx.run_dir.mkdir(parents=True, exist_ok=True)
             (ctx.run_dir / "prompt.md").write_text(ctx.prompt, encoding="utf-8")
@@ -332,6 +349,12 @@ class Porter:
                 reason, nxt = _executor_reason(result, task.id)
                 self._handoff(task, run.id, done, nxt, [reason])
                 return self._escalate(task, reason, nxt, outcome, run.id)
+
+            last_stage = stage is None or stage.name == self.cfg.stages[-1].name
+            if not last_stage and not stage.verify:
+                self._next_stage(task, run.id, stage, done)
+                feedback, rounds = "", 0
+                continue
 
             self._transition(task, Status.VERIFYING, run=run.id)
             report = self._verify(task, run.id)
@@ -361,7 +384,39 @@ class Porter:
 
             checks = ", ".join(f"`{c}`" for c in self.cfg.verify.commands) or "(no commands)"
             done.append(f"verification passed: {checks}")
+            if not last_stage:
+                self._next_stage(task, run.id, stage, done)
+                feedback, rounds = "", 0
+                continue
             return self._finish(task, run.id, result, report, done, outcome)
+
+    def _stage(self, row: TaskRow) -> StageConfig | None:
+        """The task's current stage; a resumed task continues the stage it stopped in."""
+        if not self.cfg.stages:
+            return None
+        return next((s for s in self.cfg.stages if s.name == row.stage), self.cfg.stages[0])
+
+    def _stage_model(self, stage: StageConfig | None) -> tuple[str, str]:
+        if stage is None or not (stage.model or stage.effort):
+            return "", ""
+        if not self.executor.capabilities.model_per_run:
+            self._warn(
+                f"executor {self.executor.name} cannot switch model per run; "
+                f"stage {stage.name} uses the executor's configured model"
+            )
+            return "", ""
+        return stage.model, stage.effort
+
+    def _next_stage(self, task: Task, run_id: int, stage: StageConfig, done: list[str]) -> None:
+        names = [s.name for s in self.cfg.stages]
+        nxt = self.cfg.stages[names.index(stage.name) + 1]
+        done.append(f"stage {stage.name} done")
+        self._handoff(task, run_id, done, f"stage {nxt.name}", [])
+        # The attempt budget applies per stage; the wall-time budget stays per task.
+        self.store.update(task.id, stage=nxt.name, attempts=0)
+        self.journal.append(
+            "decision", task=task.id, run=run_id, action="next_stage", stage=nxt.name
+        )
 
     def _finish(
         self,

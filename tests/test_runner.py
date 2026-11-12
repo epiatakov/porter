@@ -281,3 +281,73 @@ def test_github_label_removal_requeues(tmp_path, make_config):
     porter.sync_tasks()
     row = porter.store.get("7")
     assert row.status == Status.QUEUED and row.attempts == 0
+
+
+STAGES = """
+[[stage]]
+name = "plan"
+model = "strong"
+effort = "high"
+instructions = "Write a plan. Do not change code."
+
+[[stage]]
+name = "build"
+model = "cheap"
+verify = true
+
+[[stage]]
+name = "review"
+model = "strong"
+effort = "high"
+"""
+
+
+def test_stages_run_in_fresh_sessions_with_their_models(tmp_path, make_config):
+    script = '[{ outcome = "completed" }, { outcome = "completed" }, ' + WRITE[1:]
+    cfg = make_config(tmp_path, script=script, extra=STAGES)
+    cfg.budgets.attempts = 1  # the attempt budget applies per stage
+    porter = Porter(cfg, dry_run=True, out=quiet)
+    outcome = porter.run_once(task_id="7")
+    assert outcome.status == Status.DONE, outcome.reason
+    assert len(outcome.run_ids) == 3
+    seen = [(c.model, c.effort) for c in porter.executor.started]
+    assert seen == [("strong", "high"), ("cheap", ""), ("strong", "high")]
+    runs = cfg.state_dir(True) / "runs"
+    plan, build, review = (runs / str(i) / "prompt.md" for i in outcome.run_ids)
+    assert "## Stage 1 of 3: plan" in plan.read_text() and "Do not change code." in plan.read_text()
+    assert "Stage 2 of 3: build" in build.read_text() and "stage plan done" in build.read_text()
+    assert "It is the last one." in review.read_text()
+    # build sets verify; the last stage always verifies; plan does not.
+    verified = {e["run"] for e in porter.journal.read(task="7") if e["kind"] == "verify"}
+    assert verified == set(outcome.run_ids[1:])
+
+
+def test_resume_continues_the_parked_stage(tmp_path, make_config):
+    script = (
+        '[{ outcome = "completed" }, { outcome = "blocked", blocker = "no db" }, '
+        '{ outcome = "completed" }, ' + WRITE[1:]
+    )
+    cfg = make_config(tmp_path, script=script, extra=STAGES)
+    porter = Porter(cfg, dry_run=True, out=quiet)
+    assert porter.run_once(task_id="7").status == Status.NEEDS_HUMAN
+    assert porter.store.get("7").stage == "build"
+    outcome = porter.resume("7")
+    assert outcome.status == Status.DONE
+    first = (cfg.state_dir(True) / "runs" / str(outcome.run_ids[0]) / "prompt.md").read_text()
+    assert "Stage 2 of 3: build" in first and "no db" in first
+
+
+def test_stage_model_needs_executor_support(tmp_path, make_config):
+    from porter.executors.base import Capabilities
+    from porter.executors.fake import FakeExecutor
+
+    class NoModels(FakeExecutor):
+        capabilities = Capabilities(tools=True)
+
+    cfg = make_config(tmp_path, script=WRITE, extra=STAGES)
+    ex = NoModels(script=[{"outcome": "completed", "write": {"GREETING.md": "hi"}}])
+    porter = Porter(cfg, executor=ex, dry_run=True, out=quiet)
+    assert porter.run_once(task_id="7").status == Status.DONE
+    assert all(c.model == "" for c in ex.started)
+    warnings = [e["message"] for e in porter.journal.read() if e["kind"] == "warning"]
+    assert any("cannot switch model per run" in w for w in warnings)
