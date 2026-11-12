@@ -94,6 +94,7 @@ porter is early (v0.1). Honest state of things:
 | Task sources: local file, GitHub issues (`gh`) | Built |
 | Autonomy policy, budgets, `needs-human` escalation | Built |
 | Verification with one feedback round | Built |
+| Stages: plan / build / review in fresh sessions, model and effort per stage | Built |
 | Git branch / commit / push / `gh pr create` | Built |
 | File memory backend; optional `cairn` recall | Built (cairn: basic) |
 | `FakeExecutor` | Built |

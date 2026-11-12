@@ -57,10 +57,49 @@ The core reads the capabilities instead of assuming:
 | `tools` | agent edits files itself | (no such executor yet) |
 | `structured_output` | reserved for schema-constrained results | core parses a `PORTER-STATUS:` line |
 | `cost_reporting` | premium-request cap uses reported numbers | cap counts 1 per run, flagged `estimated` in the journal |
+| `model_per_run` | a `[[stage]]` model and effort go to the run | stages run on the configured model; porter logs a warning |
 
 The agent ends its final message with `PORTER-STATUS: done` or
 `PORTER-STATUS: blocked: <reason>`. This is plain text on purpose: it works with
 every executor, including ones without structured output.
+
+## Stages
+
+By default one task is one agent session. With `[[stage]]` tables, porter runs a task
+as an ordered list of stages. Each stage is a fresh session with its own model,
+reasoning effort and instructions. A strong model can plan and review while a cheaper
+one writes the code, and no stage drags the full transcript of the one before it.
+
+```toml
+[[stage]]
+name = "plan"
+model = "<strong model>"
+effort = "high"
+instructions = "Read the code and write the plan into the handoff. Do not change code."
+
+[[stage]]
+name = "build"
+model = "<cheaper model>"
+verify = true
+instructions = "Implement the plan from the handoff and make the checks pass."
+
+[[stage]]
+name = "review"
+model = "<strong model>"
+effort = "high"
+instructions = "Review the diff against the plan. Fix real defects only."
+```
+
+- The next stage starts from the handoff of the stage before it, never from its
+  transcript.
+- `verify = true` runs the verify commands after that stage, with the usual feedback
+  round. The last stage always verifies, because the PR depends on it.
+- `blocked` or `failed` in any stage escalates as usual. `porter resume` continues
+  the stage where the task stopped, not the first stage.
+- The attempt budget applies per stage. The wall-time and premium-request budgets
+  stay per task.
+- The journal records a `stage` decision per run with the model and effort, so cost
+  per stage can be read back later.
 
 ## Task state machine
 
@@ -79,6 +118,8 @@ every executor, including ones without structured output.
 ```
 
 - `running -> verifying` when the executor reports `completed`.
+- `running -> running` when a stage without `verify` completes and the next stage
+  starts (see Stages).
 - `verifying -> running` once (configurable) with the failing output as feedback,
   within budget.
 - `verifying -> pr_open` after commit, push, and `gh pr create`.

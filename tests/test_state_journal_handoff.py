@@ -39,6 +39,24 @@ def test_state_survives_reopen(tmp_path):
     assert StateStore(tmp_path / "state.db").get("1").status == Status.RUNNING
 
 
+def test_state_db_from_before_stages_gets_stage_column(tmp_path):
+    import sqlite3
+
+    from porter.state import SCHEMA
+
+    old = SCHEMA.replace("    stage            TEXT NOT NULL DEFAULT '',\n", "")
+    assert old != SCHEMA
+    db = sqlite3.connect(tmp_path / "state.db")
+    db.executescript(old)
+    db.execute("INSERT INTO tasks (id, title, created_at, updated_at) VALUES ('1', 't', 0, 0)")
+    db.commit()
+    db.close()
+    store = StateStore(tmp_path / "state.db")
+    assert store.get("1").stage == ""
+    store.update("1", stage="build")
+    assert store.get("1").stage == "build"
+
+
 def test_journal_append_and_filter(tmp_path):
     j = Journal(tmp_path / "j.jsonl")
     j.append("decision", task="1", action="pick")

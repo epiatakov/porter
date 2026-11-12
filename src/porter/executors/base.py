@@ -26,6 +26,7 @@ class Capabilities:
     tools: bool = False  # agent can edit files / run commands itself
     structured_output: bool = False  # final answer can be constrained to a schema
     cost_reporting: bool = False  # reports usage (e.g. premium requests) per run
+    model_per_run: bool = False  # accepts a model and reasoning effort per run (stages)
     notes: str = ""  # caveats, e.g. what was not verified
 
     def as_dict(self) -> dict[str, Any]:
@@ -34,6 +35,7 @@ class Capabilities:
             "tools": self.tools,
             "structured_output": self.structured_output,
             "cost_reporting": self.cost_reporting,
+            "model_per_run": self.model_per_run,
         }
 
 
@@ -47,6 +49,8 @@ class RunContext:
     deadline: float | None = None  # monotonic seconds
     resume_session: str = ""  # only set when the executor declares resume
     dry_run: bool = False
+    model: str = ""  # stage override; only set when the executor declares model_per_run
+    effort: str = ""  # stage override; same rule
 
 
 @dataclass

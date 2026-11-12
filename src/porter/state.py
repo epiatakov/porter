@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_handoff     TEXT NOT NULL DEFAULT '',
     last_session     TEXT NOT NULL DEFAULT '',
     reason           TEXT NOT NULL DEFAULT '',
+    stage            TEXT NOT NULL DEFAULT '',
     created_at       REAL NOT NULL,
     updated_at       REAL NOT NULL
 );
@@ -59,6 +60,7 @@ class TaskRow:
     last_session: str
     reason: str
     updated_at: float
+    stage: str = ""  # current [[stage]] name; empty before the first stage
 
 
 @dataclass
@@ -83,6 +85,9 @@ class StateStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(tasks)")}
+        if "stage" not in columns:  # a state.db written before stages existed
+            self.db.execute("ALTER TABLE tasks ADD COLUMN stage TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self.db.close()
@@ -149,6 +154,7 @@ class StateStore:
             "last_handoff",
             "last_session",
             "reason",
+            "stage",
         }
     )
 
@@ -249,4 +255,5 @@ def _task_row(r: sqlite3.Row) -> TaskRow:
         last_session=r["last_session"],
         reason=r["reason"],
         updated_at=r["updated_at"],
+        stage=r["stage"],
     )

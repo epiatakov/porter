@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .config import StageConfig
 from .handoff import Handoff
 from .memory import MemoryItem
 from .models import Task
@@ -26,6 +27,8 @@ def build_prompt(
     memory: list[MemoryItem],
     feedback: str,
     verify_commands: list[str],
+    stage: StageConfig | None = None,
+    stages: list[StageConfig] | None = None,
     max_memory_chars: int = 1500,
 ) -> str:
     parts = [f"# Task {task.id}: {task.title}"]
@@ -33,6 +36,8 @@ def build_prompt(
         parts.append(f"Source: {task.url}")
     if task.body.strip():
         parts.append(task.body.strip())
+    if stage is not None:
+        parts.append(_stage_section(stage, stages or [stage]))
     if handoff:
         parts.append(
             "## Previous handoff (resume from here)\n\n"
@@ -54,3 +59,19 @@ def build_prompt(
         )
     parts.append(RULES)
     return "\n\n".join(parts) + "\n"
+
+
+def _stage_section(stage: StageConfig, stages: list[StageConfig]) -> str:
+    names = [s.name for s in stages]
+    pos = names.index(stage.name) + 1
+    lines = [f"## Stage {pos} of {len(names)}: {stage.name}"]
+    if stage.instructions.strip():
+        lines.append(stage.instructions.strip())
+    if pos == len(names):
+        lines.append("Do only this stage. It is the last one.")
+    else:
+        lines.append(
+            f"Do only this stage. The next stage ({names[pos]}) runs in a fresh session "
+            "and starts from the handoff, so say clearly what you did and what is left."
+        )
+    return "\n\n".join(lines)

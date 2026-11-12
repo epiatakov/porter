@@ -88,6 +88,20 @@ def test_command_flags(tmp_path):
         CopilotCliExecutor(output_format="stream")
 
 
+def test_model_and_effort_per_run(tmp_path):
+    assert CopilotCliExecutor.capabilities.model_per_run is True
+    ex = CopilotCliExecutor(model="base", effort="low")
+    cmd = ex.command(ctx(tmp_path))
+    assert cmd[cmd.index("--model") + 1] == "base"
+    assert cmd[cmd.index("--reasoning-effort") + 1] == "low"
+    stage = ctx(tmp_path)
+    stage.model, stage.effort = "strong", "high"
+    cmd = ex.command(stage)
+    assert cmd[cmd.index("--model") + 1] == "strong"
+    assert cmd[cmd.index("--reasoning-effort") + 1] == "high"
+    assert "--reasoning-effort" not in CopilotCliExecutor().command(ctx(tmp_path))
+
+
 def test_completed(fake_copilot, tmp_path):
     ex, args_file = fake_copilot("done")
     events, result = drive(ex, ctx(tmp_path))

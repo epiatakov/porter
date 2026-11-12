@@ -31,7 +31,12 @@ DEFAULT_STEP = {"outcome": "completed", "summary": "Fake executor made the reque
 class FakeExecutor(Executor):
     name = "fake"
     capabilities = Capabilities(
-        resume=True, tools=True, structured_output=False, cost_reporting=True, notes="scripted"
+        resume=True,
+        tools=True,
+        structured_output=False,
+        cost_reporting=True,
+        model_per_run=True,
+        notes="scripted",
     )
     safe_for_dry_run = True
 
