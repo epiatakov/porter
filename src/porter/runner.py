@@ -583,8 +583,9 @@ class Porter:
         if started:
             return started[0]
         for row in queued:
-            # Only start tasks the source still lists (closed issues drop out).
-            if listed is None or row.task.id in listed:
+            # Only start tasks the source still lists (closed issues drop out). If the
+            # source failed, start nothing new: stored tasks may be stale or excluded now.
+            if listed is not None and row.task.id in listed:
                 return row
         return None
 
