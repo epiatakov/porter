@@ -247,6 +247,28 @@ def test_idle_when_queue_empty(tmp_path, make_config):
     assert Porter(cfg, dry_run=True, out=quiet).run_once() is None
 
 
+def test_github_label_removal_requeues(tmp_path, make_config):
+    import json as _json
+
+    from porter.proc import RecordingShell, Result
+    from porter.sources import GitHubIssues
+
+    cfg = make_config(tmp_path, script='[{ outcome = "blocked", blocker = "x" }]')
+    issue = {"number": 7, "title": "Add greeting file", "body": "", "labels": [], "url": ""}
+    listing = {"out": [issue]}
+    shell = RecordingShell({"gh issue list": lambda *_: Result([], 0, _json.dumps(listing["out"]))})
+    porter = Porter(cfg, shell=shell, source=GitHubIssues(shell), dry_run=True, out=quiet)
+    assert porter.run_once().status == Status.NEEDS_HUMAN
+    # While labeled needs-human the issue is not listed, so it stays parked.
+    listing["out"] = []
+    assert porter.run_once() is None
+    # A human removed the label: the issue is listed again and is requeued with a fresh budget.
+    listing["out"] = [issue]
+    porter.sync_tasks()
+    row = porter.store.get("7")
+    assert row.status == Status.QUEUED and row.attempts == 0
+
+
 STAGES = """
 [[stage]]
 name = "plan"
@@ -315,25 +337,3 @@ def test_stage_model_needs_executor_support(tmp_path, make_config):
     assert all(c.model == "" for c in ex.started)
     warnings = [e["message"] for e in porter.journal.read() if e["kind"] == "warning"]
     assert any("cannot switch model per run" in w for w in warnings)
-
-
-def test_github_label_removal_requeues(tmp_path, make_config):
-    import json as _json
-
-    from porter.proc import RecordingShell, Result
-    from porter.sources import GitHubIssues
-
-    cfg = make_config(tmp_path, script='[{ outcome = "blocked", blocker = "x" }]')
-    issue = {"number": 7, "title": "Add greeting file", "body": "", "labels": [], "url": ""}
-    listing = {"out": [issue]}
-    shell = RecordingShell({"gh issue list": lambda *_: Result([], 0, _json.dumps(listing["out"]))})
-    porter = Porter(cfg, shell=shell, source=GitHubIssues(shell), dry_run=True, out=quiet)
-    assert porter.run_once().status == Status.NEEDS_HUMAN
-    # While labeled needs-human the issue is not listed, so it stays parked.
-    listing["out"] = []
-    assert porter.run_once() is None
-    # A human removed the label: the issue is listed again and is requeued with a fresh budget.
-    listing["out"] = [issue]
-    porter.sync_tasks()
-    row = porter.store.get("7")
-    assert row.status == Status.QUEUED and row.attempts == 0
