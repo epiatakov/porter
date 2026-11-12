@@ -17,7 +17,7 @@ from .config import Config
 from .executors.base import ExecResult, Executor, RunContext
 from .executors.fake import FakeExecutor
 from .executors.registry import build_executor
-from .gitops import GitOps, PolicyError, PullRequest
+from .gitops import GitOps, PolicyError, PullRequest, WorktreeConflict
 from .handoff import Handoff
 from .journal import Journal
 from .memory import CairnMemory, FileMemory, Memory, NoMemory
@@ -107,6 +107,8 @@ class Porter:
             self.preview, executor = executor, FakeExecutor()
         self.executor = executor
         self.memory = memory or build_memory(cfg, self.shell, self.state_dir, self._warn)
+        # Where the current task's files live: its worktree on a real run.
+        self.task_dir = cfg.workdir
         self.git = GitOps(
             self.shell,
             cfg.workdir,
@@ -116,6 +118,7 @@ class Porter:
             github_repo=cfg.repo.github,
             state_dir_name=cfg.state_dir_name,
             dry_run=dry_run,
+            worktrees_dir=cfg.worktrees_dir,
         )
 
     # -- public API ------------------------------------------------------------
@@ -190,6 +193,7 @@ class Porter:
             for run in open_runs:
                 self.store.finish_run(run.id, "interrupted", "process stopped without cleanup")
             run_id = open_runs[-1].id if open_runs else 0
+            where = f" in worktree {self.git.worktree_path(row.branch)}" if row.branch else ""
             handoff = Handoff(
                 task_id=task.id,
                 run_id=run_id,
@@ -199,8 +203,8 @@ class Porter:
                     f"run {run_id} was interrupted while {row.status} (no clean shutdown)",
                 ],
                 next_step=(
-                    f"resume on branch {row.branch or '(not created)'}: inspect what the "
-                    "interrupted run changed, then finish the task"
+                    f"resume on branch {row.branch or '(not created)'}{where}: inspect what "
+                    "the interrupted run changed, then finish the task"
                 ),
             )
             path = handoff.write(self.runs_dir / str(run_id))
@@ -219,8 +223,20 @@ class Porter:
             state = self.git.pr_state(row.branch)
             if state == "MERGED":
                 self._transition(row.task, Status.DONE)
+                self._cleanup_worktree(row)
             elif state == "CLOSED":
                 self._transition(row.task, Status.FAILED, reason="PR closed without merge")
+
+    def _cleanup_worktree(self, row: TaskRow) -> None:
+        """After a merge, drop the task's worktree if it holds nothing unfinished."""
+        try:
+            note = self.git.remove_worktree(row.branch)
+        except (CommandError, WorktreeConflict) as exc:
+            path = self.git.worktree_path(row.branch)
+            self._warn(f"kept worktree {path} of task {row.task.id}: {_one_line(str(exc))}")
+            return
+        if note:
+            self.journal.append("git", task=row.task.id, action="remove_worktree", note=note)
 
     # -- the work loop ---------------------------------------------------------
 
@@ -239,16 +255,28 @@ class Porter:
 
         branch = row.branch or self.git.branch_name(task)
         try:
-            note = self.git.prepare_branch(branch)
+            tree = self.git.prepare_worktree(branch)
+        except WorktreeConflict as exc:
+            return self._escalate(
+                task,
+                f"could not use a worktree for {branch}: {exc}",
+                f"{exc.recovery}, then `porter resume {task.id}`",
+                outcome,
+            )
         except (CommandError, PolicyError) as exc:
             return self._escalate(
                 task,
-                f"could not prepare branch {branch}: {exc}",
-                "fix the local checkout, then resume",
+                f"could not prepare worktree for {branch}: {_one_line(str(exc))}",
+                f"fix the repository state, then `porter resume {task.id}`",
                 outcome,
             )
         self.store.update(task.id, branch=branch)
-        self.journal.append("git", task=task.id, action="prepare_branch", note=note)
+        self.journal.append(
+            "git", task=task.id, action="prepare_worktree", path=str(tree.path), note=tree.note
+        )
+        # A dry run creates no worktree: the fake executor writes into the run dir and
+        # checks run in the configured checkout, which nothing modifies.
+        self.task_dir = self.cfg.workdir if self.dry_run else tree.path
 
         memory = self.memory.recall(f"{task.title}\n{task.body}", self.cfg.memory.limit)
         self.journal.append(
@@ -270,7 +298,7 @@ class Porter:
             ctx = RunContext(
                 run_id=run.id,
                 attempt=run.attempt,
-                workdir=self.cfg.workdir,
+                workdir=self.task_dir,
                 run_dir=self.runs_dir / str(run.id),
                 prompt=build_prompt(
                     task,
@@ -325,7 +353,8 @@ class Porter:
                     else f"verification still failing after {rounds} feedback round(s): `{failed}`"
                 )
                 nxt = (
-                    "look at the failing check on the branch, fix or clarify the task, then resume"
+                    f"look at the failing check in {self._where(task)}, fix or clarify the "
+                    "task, then resume"
                 )
                 self._handoff(task, run.id, done, nxt, [reason])
                 return self._escalate(task, reason, nxt, outcome, run.id)
@@ -345,7 +374,7 @@ class Porter:
     ) -> Outcome:
         branch = self._row(task.id).branch
         try:
-            changed = self.git.has_changes() or self.git.commits_ahead(branch) > 0
+            changed = self.git.has_changes(self.task_dir) or self.git.commits_ahead(branch) > 0
         except CommandError:
             changed = False
         if not changed:
@@ -355,17 +384,20 @@ class Porter:
             return self._escalate(task, reason, nxt, outcome, run_id)
         if not self.cfg.policy.open_pr:
             reason = "verified, but policy.open_pr is false"
-            nxt = f"review branch {branch} locally and open a PR by hand"
+            nxt = f"review {self._where(task)} and open a PR by hand"
             self._handoff(task, run_id, done, nxt, [])
             return self._escalate(task, reason, nxt, outcome, run_id)
 
         title = task.title
         body = self._pr_body(task, run_id, result, report)
         try:
-            pr = self.git.commit_push_pr(task, branch, title, body)
+            pr = self.git.commit_push_pr(task, branch, title, body, self.task_dir)
         except (CommandError, PolicyError) as exc:
             reason = f"could not push or open the PR: {_one_line(str(exc))}"
-            nxt = f"push {branch} and open the PR by hand, or fix credentials and resume"
+            nxt = (
+                f"push {branch} from {self._where(task)} and open the PR by hand, or fix "
+                "credentials and resume"
+            )
             self._handoff(task, run_id, done, nxt, [reason])
             return self._escalate(task, reason, nxt, outcome, run_id)
         self.journal.append(
@@ -424,7 +456,7 @@ class Porter:
 
     def _verify(self, task: Task, run_id: int) -> VerifyReport:
         report = run_checks(
-            self.shell, self.cfg.verify.commands, self.cfg.workdir, self.cfg.verify.timeout
+            self.shell, self.cfg.verify.commands, self.task_dir, self.cfg.verify.timeout
         )
         for r in report.results:
             self.journal.append(
@@ -464,6 +496,10 @@ class Porter:
         where = (
             f" Handoff: `.porter/runs/{run_id}/handoff.md` on the porter host." if run_id else ""
         )
+        tree = self._worktree_of(task)
+        if tree is not None:
+            where += f" Unfinished work stays in the worktree `{self._rel(tree)}`."
+
         comment = (
             f"porter stopped working on this task.\n\n**Reason:** {reason}\n\n"
             f"**Next step:** {next_step}.{where}\n\n"
@@ -507,6 +543,25 @@ class Porter:
         self.store.set_status(task.id, new, **fields)
         self.journal.append("state", task=task.id, run=run, **{"from": str(old), "to": str(new)})
         self.out(f"task {task.id}: {old} -> {new}")
+
+    def _worktree_of(self, task: Task) -> Path | None:
+        """The task's existing worktree, if porter made one (never in a dry run)."""
+        row = self.store.get(task.id)
+        if self.dry_run or row is None or not row.branch:
+            return None
+        path = self.git.worktree_path(row.branch)
+        return path if path.is_dir() else None
+
+    def _where(self, task: Task) -> str:
+        tree = self._worktree_of(task)
+        branch = self._row(task.id).branch
+        return f"worktree {tree} (branch {branch})" if tree else f"branch {branch}"
+
+    def _rel(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.cfg.workdir))
+        except ValueError:
+            return str(path)
 
     def _row(self, task_id: str) -> TaskRow:
         row = self.store.get(task_id)

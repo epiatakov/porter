@@ -22,6 +22,5 @@ Kept short on purpose. Items move to the README status table when built.
 
 ## Later
 
-- Worktree per task, so the user's checkout is never touched.
 - Plugin discovery through package entry points.
 - Cost reports from the journal (`porter log --cost`).
