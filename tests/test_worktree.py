@@ -1,22 +1,22 @@
 """Per-task worktrees: porter never changes the developer's checkout.
 
 These tests use a real Git repository, the real CLI entry point, the FakeExecutor,
-and a fake ``gh`` on PATH.
+and a fake ``gh`` (see ``fake_gh_bin``).
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from porter.cli import main
+from porter.executors.fake import KILLED_RETURNCODE
 from porter.models import Status
 from porter.runner import Porter
 
-from .conftest import FakeGhShell, git
+from .conftest import FakeGhShell, check, child_env, git, py
 
 BRANCH = "porter/7-add-greeting-file"
 RUN_7 = ("run", "--once", "--task", "7")
@@ -74,11 +74,14 @@ def test_task_runs_in_worktree_and_leaves_developer_checkout_alone(
     repo, make_config, fake_gh_bin, tmp_path
 ):
     seen = tmp_path / "verify-saw.txt"
-    verify = (
-        f"['pwd > {seen}', 'test -f GREETING.md', 'test ! -e draft.md', "
-        "'test ! -e feature.txt', 'grep -qx \"test repo\" README.md', "
-        "'test \"$(cat notes.txt)\" = notes']"
-    )
+    verify = [
+        py(f"import os, pathlib; pathlib.Path('{seen.as_posix()}').write_text(os.getcwd())"),
+        check("Path('GREETING.md').is_file()"),
+        check("not Path('draft.md').exists()"),
+        check("not Path('feature.txt').exists()"),
+        check("'test repo' in Path('README.md').read_text().splitlines()"),
+        check("Path('notes.txt').read_text().splitlines() == ['notes']"),
+    ]
     cfg = make_config(repo, script=WRITE, verify=verify)
     developer_at_work(repo)
     before = snapshot(repo)
@@ -109,7 +112,7 @@ def test_interrupted_run_keeps_unfinished_edits_and_resumes_in_same_worktree(
         '[{ outcome = "completed", kill = true, write = { "part.txt" = "half done" } }, '
         + WRITE[1:]
     )
-    verify = "['test -f part.txt', 'test -f GREETING.md']"
+    verify = [check("Path('part.txt').is_file()"), check("Path('GREETING.md').is_file()")]
     cfg = make_config(repo, script=script, verify=verify)
     developer_at_work(repo)
     before = snapshot(repo)
@@ -120,9 +123,9 @@ def test_interrupted_run_keeps_unfinished_edits_and_resumes_in_same_worktree(
         capture_output=True,
         text=True,
         timeout=60,
-        env={**os.environ, "PORTER_FAKE_ALLOW_KILL": "1"},
+        env=child_env(PORTER_FAKE_ALLOW_KILL="1"),
     )
-    assert proc.returncode == -9, proc.stderr
+    assert proc.returncode == KILLED_RETURNCODE, proc.stderr
     tree = tree_of(cfg)
     # The unfinished edit is in porter's worktree, available for inspection.
     assert (tree / "part.txt").read_text() == "half done"
@@ -206,7 +209,7 @@ def test_retry_reuses_edits_and_rejects_replaced_worktree(repo, make_config):
         '[{ outcome = "blocked", blocker = "unclear", write = { "part.txt" = "half" } }, '
         + WRITE[1:]
     )
-    cfg = make_config(repo, script=script, verify="['test -f part.txt']")
+    cfg = make_config(repo, script=script, verify=[check("Path('part.txt').is_file()")])
     porter = Porter(cfg, shell=FakeGhShell(), out=quiet)
     assert porter.run_once(task_id="7").status == Status.NEEDS_HUMAN
     tree = tree_of(cfg)

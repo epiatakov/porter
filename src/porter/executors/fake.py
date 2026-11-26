@@ -9,9 +9,9 @@ Script steps (one per attempt; the last step repeats)::
 
 Keys: ``outcome`` (completed|blocked|failed), ``summary``, ``blocker``, ``write``
 (files relative to the workdir), ``events`` (list of strings), ``cost``
-(e.g. ``{premium_requests = 1}``), ``kill`` (SIGKILL this process after the writes, to
-test recovery; only when ``PORTER_FAKE_ALLOW_KILL=1``), ``sleep`` (seconds per event, to
-test wall-time budgets).
+(e.g. ``{premium_requests = 1}``), ``kill`` (kill this process after the writes, to
+test recovery: SIGKILL on POSIX, TerminateProcess on Windows; only when
+``PORTER_FAKE_ALLOW_KILL=1``), ``sleep`` (seconds per event, to test wall-time budgets).
 """
 
 from __future__ import annotations
@@ -26,6 +26,19 @@ from ..models import Task
 from .base import Capabilities, ExecEvent, ExecResult, Executor, Run, RunContext
 
 DEFAULT_STEP = {"outcome": "completed", "summary": "Fake executor made the requested change."}
+
+# The return code that a parent sees after a `kill` step. Windows has no SIGKILL. There,
+# os.kill() with any signal other than the two console events calls TerminateProcess,
+# which also ends the process at once without cleanup, and the number becomes the exit
+# code.
+KILLED_RETURNCODE = 9 if os.name == "nt" else -signal.SIGKILL
+
+
+def _kill_self() -> None:
+    if os.name == "nt":
+        os.kill(os.getpid(), KILLED_RETURNCODE)
+    else:
+        os.kill(os.getpid(), signal.SIGKILL)
 
 
 class FakeExecutor(Executor):
@@ -71,7 +84,7 @@ class FakeExecutor(Executor):
         if step.get("kill") and os.environ.get("PORTER_FAKE_ALLOW_KILL") == "1":
             # Simulates the machine or process dying after unfinished edits: no cleanup,
             # no handoff. Guarded by an env var so a test runner never kills itself.
-            os.kill(os.getpid(), signal.SIGKILL)
+            _kill_self()
         if step.get("cost"):
             yield ExecEvent("usage", "usage", dict(step["cost"]))
 

@@ -128,10 +128,11 @@ Record results (date, CLI version, findings) in this file.
 ## Fake executor (`fake`)
 
 Scripted steps, one per attempt (the last step repeats). Keys: `outcome`,
-`summary`, `blocker`, `write` (files), `events`, `cost`, `sleep`, `kill` (SIGKILL
-after the writes, leaving unfinished edits; only with `PORTER_FAKE_ALLOW_KILL=1`;
-used by the killed-run tests). On a real run it writes into the task worktree; in a
-dry run its file writes go to the run directory, not the checkout.
+`summary`, `blocker`, `write` (files), `events`, `cost`, `sleep`, `kill` (SIGKILL on
+POSIX, TerminateProcess on Windows, after the writes, leaving unfinished edits; only
+with `PORTER_FAKE_ALLOW_KILL=1`; used by the killed-run tests). On a real run it
+writes into the task worktree; in a dry run its file writes go to the run directory,
+not the checkout.
 
 ## Writing an executor
 
