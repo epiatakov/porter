@@ -743,6 +743,9 @@ def _read_pid(path: Path) -> int:
 
 
 def _alive(pid: int) -> bool:
+    """Tell whether process `pid` still runs, without sending it a signal."""
+    if os.name == "nt":
+        return _alive_nt(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -750,3 +753,45 @@ def _alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+# Windows: os.kill() is no liveness test there. Signal 0 is CTRL_C_EVENT, which becomes a
+# console control event, and any other signal goes through TerminateProcess. Query the
+# process instead.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+_ERROR_INVALID_PARAMETER = 87  # OpenProcess: no process has this id
+
+
+def _kernel32():
+    import ctypes
+    from ctypes import wintypes
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    k.GetExitCodeProcess.restype = wintypes.BOOL
+    k.CloseHandle.argtypes = (wintypes.HANDLE,)
+    k.CloseHandle.restype = wintypes.BOOL
+    return k
+
+
+def _alive_nt(pid: int) -> bool:
+    import ctypes
+
+    kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # Only "no such process" frees the lock. Any other failure (for example access
+        # denied) means the holder may still run, so keep its lock.
+        return ctypes.get_last_error() != _ERROR_INVALID_PARAMETER
+    try:
+        code = ctypes.c_ulong()  # DWORD
+        if not kernel32.GetExitCodeProcess(handle, ctypes.pointer(code)):
+            return True  # cannot tell: keep the lock
+        # A process that exited with code 259 also reads as running; the lock then
+        # stays until someone removes it, which is the safe side.
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
