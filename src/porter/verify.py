@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import sys
 from dataclasses import dataclass, field
@@ -41,8 +42,14 @@ class VerifyReport:
 
 
 def expand(command: str) -> str:
-    """``{python}`` expands to the interpreter running porter (portable demo configs)."""
-    return command.replace("{python}", shlex.quote(sys.executable))
+    """``{python}`` expands to the interpreter running porter (portable demo configs).
+
+    The path is quoted for the shell that runs verify commands: ``/bin/sh`` on POSIX,
+    ``cmd.exe`` on Windows. cmd.exe does not know single quotes, so there the path goes
+    in double quotes (a Windows path cannot contain one).
+    """
+    python = f'"{sys.executable}"' if os.name == "nt" else shlex.quote(sys.executable)
+    return command.replace("{python}", python)
 
 
 def run_checks(shell: Shell, commands: list[str], cwd: Path, timeout: float) -> VerifyReport:

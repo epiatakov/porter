@@ -9,11 +9,12 @@ from pathlib import Path
 
 import pytest
 
+from porter.executors.fake import KILLED_RETURNCODE
 from porter.handoff import Handoff
 from porter.models import Status, Task
 from porter.runner import BusyError, Porter
 
-from .conftest import FakeGhShell, git, states
+from .conftest import FAIL, FakeGhShell, check, child_env, git, states
 
 ALL_STATES = ["queued", "running", "verifying", "pr_open", "done"]
 WRITE = '[{ outcome = "completed", summary = "Wrote it.", write = { "GREETING.md" = "hi" } }]'
@@ -80,7 +81,8 @@ def test_real_run_opens_pr_on_branch(repo, make_config):
 def test_verify_failure_feeds_back_once_then_passes(repo, make_config):
     # Attempt 1 writes nothing (check fails); attempt 2 writes the file (check passes).
     script = '[{ outcome = "completed" }, { outcome = "completed", write = { "ok.flag" = "1" } }]'
-    cfg = make_config(repo, script=script, verify='["test -f ok.flag"]')
+    flag = check("Path('ok.flag').is_file()")
+    cfg = make_config(repo, script=script, verify=[flag])
     porter = Porter(cfg, shell=FakeGhShell(), out=quiet)
     outcome = porter.run_once(task_id="7")
     assert outcome.status == Status.PR_OPEN
@@ -94,12 +96,12 @@ def test_verify_failure_feeds_back_once_then_passes(repo, make_config):
     ]
     second_prompt = (cfg.state_dir() / "runs" / "2" / "prompt.md").read_text()
     assert "Verification failed on your previous attempt" in second_prompt
-    assert "test -f ok.flag" in second_prompt
+    assert flag in second_prompt
     assert porter.store.get("7").attempts == 2
 
 
 def test_verify_failure_escalates_after_feedback(tmp_path, make_config):
-    cfg = make_config(tmp_path, script='[{ outcome = "completed" }]', verify='["false"]')
+    cfg = make_config(tmp_path, script='[{ outcome = "completed" }]', verify=[FAIL])
     porter = Porter(cfg, dry_run=True, out=quiet)
     outcome = porter.run_once(task_id="7")
     assert outcome.status == Status.NEEDS_HUMAN
@@ -138,7 +140,7 @@ def test_attempt_budget_escalates(tmp_path, make_config):
     cfg = make_config(
         tmp_path,
         script='[{ outcome = "completed" }]',
-        verify='["false"]',
+        verify=[FAIL],
         extra="[policy]\nverify_feedback_rounds = 5\n",
     )
     cfg.budgets.attempts = 2
@@ -161,7 +163,7 @@ def test_wall_time_budget_stops_executor(tmp_path, make_config):
 
 def test_premium_request_cap(tmp_path, make_config):
     script = '[{ outcome = "completed", cost = { premium_requests = 3 } }]'
-    cfg = make_config(tmp_path, script=script, verify='["false"]')
+    cfg = make_config(tmp_path, script=script, verify=[FAIL])
     cfg.budgets.premium_requests = 2
     porter = Porter(cfg, dry_run=True, out=quiet)
     outcome = porter.run_once(task_id="7")
@@ -191,7 +193,7 @@ def test_lock_blocks_concurrent_runs(tmp_path, make_config):
 
 
 def test_resume_after_killed_run(repo, make_config):
-    """A run killed with SIGKILL mid-executor is recovered and resumed from its handoff."""
+    """A run killed mid-executor (no cleanup) is recovered and resumed from its handoff."""
     script = '[{ outcome = "completed", kill = true }, ' + WRITE[1:]
     cfg = make_config(repo, script=script)
     proc = subprocess.run(
@@ -210,9 +212,9 @@ def test_resume_after_killed_run(repo, make_config):
         capture_output=True,
         text=True,
         timeout=60,
-        env={**os.environ, "PORTER_FAKE_ALLOW_KILL": "1"},
+        env=child_env(PORTER_FAKE_ALLOW_KILL="1"),
     )
-    assert proc.returncode == -9, proc.stderr
+    assert proc.returncode == KILLED_RETURNCODE, proc.stderr
 
     porter = Porter(cfg, shell=FakeGhShell(), out=quiet)
     row = porter.store.get("7")

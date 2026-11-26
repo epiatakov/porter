@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
 import pytest
 
+import porter
 from porter.config import load_config
 from porter.proc import Result, Shell
 
@@ -33,6 +36,17 @@ class FakeGhShell(Shell):
         return super().run(args, cwd=cwd, input=input, timeout=timeout, check=check)
 
 
+def child_env(**extra: str) -> dict[str, str]:
+    """Environment for a child ``python -m porter.cli`` that imports the porter under test.
+
+    Without it the child imports the installed porter, which can be another checkout (an
+    editable install) when the tests run in a worktree.
+    """
+    src = str(Path(porter.__file__).resolve().parents[1])
+    path = os.pathsep.join(p for p in (src, os.environ.get("PYTHONPATH")) if p)
+    return {**os.environ, "PYTHONPATH": path, **extra}
+
+
 def git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
@@ -54,7 +68,34 @@ labels = ["p1"]
 """
 
 
-def write_config(root: Path, *, script: str, verify: str = '["true"]', extra: str = "") -> Path:
+# Verify commands run through the shell: /bin/sh on POSIX, cmd.exe on Windows. Tests use
+# only commands that both shells run the same way, so they need no POSIX tools on PATH.
+PASS = "exit 0"
+FAIL = "exit 1"
+
+
+def py(code: str) -> str:
+    """A verify command that runs Python ``code`` with the interpreter running porter.
+
+    Keep ``code`` free of double quotes, ``$``, ``%`` and backslashes: sh or cmd.exe
+    would change them.
+    """
+    return f'{{python}} -c "{code}"'
+
+
+def check(expr: str) -> str:
+    """A verify command that passes when the Python expression ``expr`` is true.
+
+    ``expr`` can use ``Path`` and reads paths relative to the verify directory.
+    """
+    return py(f"import sys; from pathlib import Path; sys.exit(not ({expr}))")
+
+
+def write_config(
+    root: Path, *, script: str, verify: list[str] | None = None, extra: str = ""
+) -> Path:
+    # A JSON string list is also a TOML array.
+    verify = json.dumps([PASS] if verify is None else verify)
     cfg = root / "porter.toml"
     cfg.write_text(
         textwrap.dedent(
@@ -131,27 +172,52 @@ def states(porter, task_id: str) -> list[str]:
     return out
 
 
-FAKE_GH = """#!/bin/sh
-# Fake `gh` on PATH for tests that go through the real CLI entry point.
-echo "$*" >> "$FAKE_GH_LOG"
-case "$1 $2" in
-  "pr create") cat > /dev/null; echo "https://github.com/acme/widgets/pull/7" ;;
-  "pr view") echo '{"state": "OPEN", "url": "https://github.com/acme/widgets/pull/7"}' ;;
-esac
-exit 0
+FAKE_GH = """\
+# Fake `gh` for tests that go through the real CLI entry point.
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as log:
+    log.write(" ".join(args) + "\\n")
+if args[:2] == ["pr", "create"]:
+    sys.stdin.read()
+    print("https://github.com/acme/widgets/pull/7")
+elif args[:2] == ["pr", "view"]:
+    print(json.dumps({"state": "OPEN", "url": "https://github.com/acme/widgets/pull/7"}))
 """
 
 
 @pytest.fixture
 def fake_gh_bin(tmp_path: Path, monkeypatch) -> Path:
-    """Put a canned ``gh`` first on PATH. Returns the file that logs its calls."""
+    """Send porter's ``gh`` calls to a canned fake. Returns the file that logs its calls.
+
+    On POSIX a ``gh`` script goes first on PATH. On Windows, porter starts ``gh`` without
+    a shell, and then Windows looks up only ``.exe`` files on PATH: no script or ``.cmd``
+    file can stand in for ``gh.exe``. There the fixture changes ``Shell.run`` so that a
+    ``gh`` command runs the same fake.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    gh = bin_dir / "gh"
-    gh.write_text(FAKE_GH)
-    gh.chmod(0o755)
+    fake = bin_dir / "fake_gh.py"
+    fake.write_text(FAKE_GH, encoding="utf-8")
     log = tmp_path / "gh-calls.log"
     log.touch()
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_GH_LOG", str(log))
+    if os.name == "nt":
+        real_run = Shell.run
+
+        def run(self, args, **kw):
+            if not isinstance(args, str) and args and args[0] == "gh":
+                args = [sys.executable, str(fake), *args[1:]]
+            return real_run(self, args, **kw)
+
+        monkeypatch.setattr(Shell, "run", run)
+    else:
+        gh = bin_dir / "gh"
+        python, script = shlex.quote(sys.executable), shlex.quote(str(fake))
+        gh.write_text(f'#!/bin/sh\nexec {python} {script} "$@"\n')
+        gh.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return log
