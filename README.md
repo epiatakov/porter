@@ -118,17 +118,18 @@ porter is early (v0.1). Honest state of things:
 |---|---|
 | Config, SQLite state, handoffs, journal | Built |
 | Task sources: local file, GitHub issues (`gh`) | Built |
+| Task source failure: no new task starts, only work in flight continues | Built |
 | Autonomy policy, budgets, `needs-human` escalation | Built |
 | Verification with one feedback round | Built |
 | Stages: plan / build / review in fresh sessions, model and effort per stage | Built |
-| Git branch / commit / push / `gh pr create`, in a per-task worktree | Built |
+| Worktree per task: your checkout, branch, and edits stay as they are | Built |
+| Git branch / commit / push / `gh pr create` from the task worktree | Built |
 | File memory backend; optional `cairn` recall | Built (cairn: basic) |
 | `FakeExecutor` | Built |
 | `CopilotCliExecutor` | Built; unit-tested against a fake process; real smoke test is manual |
 | Codex and Claude Code executors | Planned |
 | Follow-up loop for CI failures and review comments | Planned |
 | Scheduler / daemon (`porter run` without `--once`) | Planned |
-| Worktree isolation per task | Built |
 
 See [ROADMAP.md](ROADMAP.md), [docs/design.md](docs/design.md),
 [docs/executors.md](docs/executors.md), and [docs/dogfood.md](docs/dogfood.md).
